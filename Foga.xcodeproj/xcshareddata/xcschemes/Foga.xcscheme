@@ -30,9 +30,6 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:Foga.xctestplan">
-         </TestPlanReference>
-         <TestPlanReference
             reference = "container:Foga/Foga.xctestplan"
             default = "YES">
          </TestPlanReference>

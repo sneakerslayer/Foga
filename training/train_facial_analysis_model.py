@@ -63,6 +63,10 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+import torchvision.transforms as transforms
+from tqdm import tqdm
 
 
 # ============================================================================
@@ -196,31 +200,36 @@ def stratified_train_test_split(
     data: pd.DataFrame,
     demographics: List[str],
     test_size: float = 0.2
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> Tuple[List[int], List[int]]:
     """
     Stratified train/test split ensuring demographic balance
     
     Ensures all demographic groups are represented in both train and test sets
+    
+    Returns:
+        train_indices, val_indices (lists of integer indices)
     """
     # Group by demographics
     groups = data.groupby(demographics)
     
     train_indices = []
-    test_indices = []
+    val_indices = []
     
     for _, group_df in groups:
-        group_train, group_test = train_test_split(
-            group_df.index,
+        if len(group_df) < 2:
+            # If group is too small, put all in training
+            train_indices.extend(group_df.index.tolist())
+            continue
+            
+        group_train, group_val = train_test_split(
+            group_df.index.tolist(),
             test_size=test_size,
             random_state=42
         )
         train_indices.extend(group_train)
-        test_indices.extend(group_test)
+        val_indices.extend(group_val)
     
-    train_data = data.loc[train_indices]
-    test_data = data.loc[test_indices]
-    
-    return train_data, test_data
+    return train_indices, val_indices
 
 
 def calculate_demographic_metrics(
@@ -261,6 +270,170 @@ def enforce_fairness_constraint(
     # This would be implemented as a regularization term in the loss function
     # For now, placeholder
     pass
+
+
+# ============================================================================
+# Data Loading
+# ============================================================================
+
+class FacialAnalysisDataset(Dataset):
+    """
+    Dataset for facial analysis model training
+    
+    Loads images, metadata, ARKit features, and labels from CSV files
+    """
+    
+    def __init__(self, data_dir: str, metadata_df: pd.DataFrame, 
+                 arkit_df: pd.DataFrame, labels_df: pd.DataFrame,
+                 transform=None):
+        self.data_dir = Path(data_dir)
+        self.images_dir = self.data_dir / 'images'
+        self.metadata_df = metadata_df
+        self.arkit_df = arkit_df
+        self.labels_df = labels_df
+        self.transform = transform or self._default_transform()
+        
+        # Merge all dataframes on image_id
+        self.data = metadata_df.merge(arkit_df, on='image_id', how='inner')
+        self.data = self.data.merge(labels_df, on='image_id', how='inner')
+        
+        # Reset index to ensure sequential 0..n-1 indices for dataset access
+        self.data = self.data.reset_index(drop=True)
+        
+        # Encode categorical variables
+        self._encode_categorical()
+        
+    def _default_transform(self):
+        """Default image transformations"""
+        return transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                               std=[0.229, 0.224, 0.225])  # ImageNet normalization
+        ])
+    
+    def _encode_categorical(self):
+        """Encode categorical variables to numeric"""
+        # Gender encoding
+        gender_map = {'male': 0.0, 'female': 1.0, 'other': 0.5}
+        self.data['gender_encoded'] = self.data['gender'].map(gender_map).fillna(0.5)
+        
+        # Ethnicity encoding (simplified - would use one-hot in production)
+        ethnicity_map = {
+            'african_american': 0.0, 'asian': 0.125, 'caucasian': 0.25,
+            'hispanic': 0.375, 'middle_eastern': 0.5, 'native_american': 0.625,
+            'pacific_islander': 0.75, 'mixed': 0.875, 'other': 0.9375,
+            'prefer_not_to_say': 0.5
+        }
+        self.data['ethnicity_encoded'] = self.data['ethnicity'].map(ethnicity_map).fillna(0.5)
+        
+        # Context encoding
+        context_map = {'baseline': 0.0, 'progress': 0.5, 'followup': 1.0}
+        self.data['context_encoded'] = self.data['context'].map(context_map).fillna(0.0)
+        
+        # Category encoding
+        category_map = {'low': 0, 'moderate': 1, 'high': 2}
+        self.data['category_encoded'] = self.data['true_category'].map(category_map).fillna(1)  # Default to 'moderate' (1)
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        image_id = row['image_id']
+        
+        # Load image
+        image_path = self.images_dir / f"{image_id}.png"
+        if not image_path.exists():
+            # Try JPEG
+            image_path = self.images_dir / f"{image_id}.jpg"
+        
+        try:
+            image = Image.open(image_path).convert('RGB')
+            if self.transform:
+                image = self.transform(image)
+        except Exception as e:
+            # Return black image if file not found
+            image = torch.zeros(3, 224, 224)
+        
+        # Extract metadata features (6 features)
+        age = row.get('age', 30)
+        age_norm = (age - 18) / 62.0  # Normalize 18-80 to 0-1
+        gender = row.get('gender_encoded', 0.5)
+        bmi = row.get('bmi', 22.0)
+        bmi_norm = (bmi - 15) / 25.0  # Normalize 15-40 to 0-1
+        ethnicity = row.get('ethnicity_encoded', 0.5)
+        skin_tone = row.get('skin_tone', 3)
+        skin_tone_norm = (skin_tone - 1) / 5.0  # Normalize 1-6 to 0-1
+        context = row.get('context_encoded', 0.0)
+        
+        metadata = torch.tensor([
+            age_norm, gender, bmi_norm, ethnicity, skin_tone_norm, context
+        ], dtype=torch.float32)
+        
+        # Extract ARKit features (10 features)
+        angle = row.get('cervico_mental_angle', 100.0)
+        angle_norm = (angle - 70) / 80.0  # Normalize 70-150 to 0-1
+        length = row.get('submental_cervical_length', 40.0)
+        length_norm = (length - 15) / 45.0  # Normalize 15-60 to 0-1
+        jaw_idx = row.get('jaw_definition_index', 0.65)
+        neck = row.get('neck_circumference', 380.0)
+        neck_norm = (neck - 300) / 200.0  # Normalize 300-500 to 0-1
+        adiposity = row.get('facial_adiposity_index', 35.0)
+        adiposity_norm = adiposity / 100.0  # Normalize 0-100 to 0-1
+        face_width = row.get('face_width', 145.0)
+        face_width_norm = (face_width - 120) / 60.0  # Normalize 120-180 to 0-1
+        face_height = row.get('face_height', 210.0)
+        face_height_norm = (face_height - 180) / 70.0  # Normalize 180-250 to 0-1
+        pitch = row.get('head_pose_pitch', 0.0)
+        pitch_norm = pitch / 30.0  # Normalize ±30 to ±1
+        yaw = row.get('head_pose_yaw', 0.0)
+        yaw_norm = yaw / 30.0
+        roll = row.get('head_pose_roll', 0.0)
+        roll_norm = roll / 30.0
+        
+        arkit_features = torch.tensor([
+            angle_norm, length_norm, jaw_idx, neck_norm, adiposity_norm,
+            face_width_norm, face_height_norm, pitch_norm, yaw_norm, roll_norm
+        ], dtype=torch.float32)
+        
+        # Extract labels
+        angle_target = torch.tensor(row.get('true_angle', 100.0), dtype=torch.float32)
+        category_target = torch.tensor(row.get('category_encoded', 1), dtype=torch.long)
+        
+        return image, metadata, arkit_features, angle_target, category_target
+
+
+def load_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Load metadata, ARKit features, and labels from CSV files
+    
+    Returns:
+        metadata_df, arkit_df, labels_df
+    """
+    data_path = Path(data_dir)
+    
+    # Load CSVs
+    metadata_path = data_path / 'metadata.csv'
+    arkit_path = data_path / 'arkit_features.csv'
+    labels_path = data_path / 'labels.csv'
+    
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Metadata CSV not found: {metadata_path}")
+    if not arkit_path.exists():
+        raise FileNotFoundError(f"ARKit features CSV not found: {arkit_path}")
+    if not labels_path.exists():
+        raise FileNotFoundError(f"Labels CSV not found: {labels_path}")
+    
+    metadata_df = pd.read_csv(metadata_path)
+    arkit_df = pd.read_csv(arkit_path)
+    labels_df = pd.read_csv(labels_path)
+    
+    print(f"Loaded {len(metadata_df)} metadata records")
+    print(f"Loaded {len(arkit_df)} ARKit feature records")
+    print(f"Loaded {len(labels_df)} label records")
+    
+    return metadata_df, arkit_df, labels_df
 
 
 # ============================================================================
@@ -313,6 +486,13 @@ def train_model(
         for batch in train_loader:
             image, metadata, arkit, angle_target, category_target = batch
             
+            # Move to device
+            image = image.to(device)
+            metadata = metadata.to(device)
+            arkit = arkit.to(device)
+            angle_target = angle_target.to(device)
+            category_target = category_target.to(device)
+            
             # Forward pass
             angle_pred, category_logits, confidence = model(image, metadata, arkit)
             
@@ -349,6 +529,13 @@ def train_model(
             for batch in val_loader:
                 image, metadata, arkit, angle_target, category_target = batch
                 
+                # Move to device
+                image = image.to(device)
+                metadata = metadata.to(device)
+                arkit = arkit.to(device)
+                angle_target = angle_target.to(device)
+                category_target = category_target.to(device)
+                
                 angle_pred, category_logits, confidence = model(image, metadata, arkit)
                 
                 angle_loss = angle_criterion(angle_pred.squeeze(), angle_target)
@@ -379,7 +566,8 @@ def train_model(
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), 'best_model.pth')
+            best_model_path = os.path.join(os.getcwd(), 'best_model.pth')
+            torch.save(model.state_dict(), best_model_path)
     
     return history
 
@@ -466,29 +654,108 @@ def main():
     
     # Load data
     print("Loading training data...")
-    # In production, would load from CSV/JSON with image paths, metadata, ARKit features, labels
-    # For now, placeholder
-    print("Note: Data loading not implemented. This is a template script.")
-    print("Expected data format:")
-    print("  - Images: 224x224 RGB PNG files")
-    print("  - Metadata CSV: age, gender, bmi, ethnicity, skin_tone, context")
-    print("  - ARKit CSV: cervico_mental_angle, submental_cervical_length, etc.")
-    print("  - Labels CSV: true_angle, true_category")
+    try:
+        metadata_df, arkit_df, labels_df = load_data(args.data_dir)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        print("\nPlease ensure your data directory contains:")
+        print("  - images/ folder with PNG/JPEG images")
+        print("  - metadata.csv")
+        print("  - arkit_features.csv")
+        print("  - labels.csv")
+        print("\nSee DATA_PREPARATION.md for data format details.")
+        return
+    
+    # Create full dataset first (this merges all dataframes)
+    print("Creating datasets...")
+    full_dataset = FacialAnalysisDataset(
+        args.data_dir, metadata_df, arkit_df, labels_df
+    )
+    
+    # Stratified train/test split on the merged dataset
+    # IMPORTANT: Split on the merged dataset, not just metadata_df,
+    # because the dataset uses inner joins which may remove some rows
+    print("Splitting data into train/validation sets...")
+    train_indices, val_indices = stratified_train_test_split(
+        full_dataset.data,  # Use the merged dataframe from the dataset
+        demographics=['ethnicity', 'gender', 'skin_tone'],
+        test_size=0.2
+    )
+    
+    # Create subset datasets
+    train_dataset = torch.utils.data.Subset(full_dataset, train_indices)
+    val_dataset = torch.utils.data.Subset(full_dataset, val_indices)
+    
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=2,
+        pin_memory=True if args.device == 'cuda' else False
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True if args.device == 'cuda' else False
+    )
+    
+    print(f"Training samples: {len(train_dataset)}")
+    print(f"Validation samples: {len(val_dataset)}")
     
     # Create model
     print("Creating model...")
     model = FacialAnalysisModel()
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
-    # Training would happen here
-    print("Note: Training loop not fully implemented. This is a template.")
-    print("To complete implementation:")
-    print("  1. Load and preprocess data")
-    print("  2. Create data loaders")
-    print("  3. Implement stratified sampling")
-    print("  4. Add fairness constraints to loss function")
-    print("  5. Train model with bias monitoring")
-    print("  6. Validate across demographic groups")
-    print("  7. Convert to Core ML format")
+    # Train model
+    print(f"\nStarting training on {args.device}...")
+    print(f"Epochs: {args.epochs}, Batch size: {args.batch_size}, Learning rate: {args.learning_rate}")
+    
+    history = train_model(
+        model,
+        train_loader,
+        val_loader,
+        num_epochs=args.epochs,
+        learning_rate=args.learning_rate,
+        device=args.device
+    )
+    
+    # Save training history
+    history_path = os.path.join(args.output_dir, 'training_history.json')
+    history_dict = {
+        'train_loss': history['train_loss'],
+        'val_loss': history['val_loss'],
+        'train_angle_mae': history['train_angle_mae'],
+        'val_angle_mae': history['val_angle_mae'],
+        'train_category_acc': history['train_category_acc'],
+        'val_category_acc': history['val_category_acc']
+    }
+    with open(history_path, 'w') as f:
+        json.dump(history_dict, f, indent=2)
+    print(f"\nTraining history saved to {history_path}")
+    
+    # Load best model
+    print("Loading best model...")
+    best_model_path = os.path.join(os.getcwd(), 'best_model.pth')
+    if os.path.exists(best_model_path):
+        model.load_state_dict(torch.load(best_model_path))
+    else:
+        print("Warning: Best model checkpoint not found. Using final model.")
+    
+    # Convert to Core ML
+    if COREML_AVAILABLE:
+        print("Converting to Core ML format...")
+        model_path = os.path.join(args.output_dir, 'FacialAnalysisModel.mlmodelc')
+        convert_to_coreml(model, model_path, quantize=args.quantize)
+        print(f"Core ML model saved to {model_path}")
+        print("Add this file to your Xcode project bundle.")
+    else:
+        print("Warning: Core ML Tools not available. Skipping conversion.")
+        print("Install with: pip install coremltools")
     
     # Save model architecture info
     model_info = {

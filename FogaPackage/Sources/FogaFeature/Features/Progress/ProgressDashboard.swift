@@ -5,6 +5,7 @@ import SwiftUI
 public struct ProgressDashboard: View {
     @StateObject private var dataService: DataService
     @StateObject private var viewModel: ProgressViewModel
+    @State private var showPhotoCapture = false
     
     /// Initialize with shared DataService
     /// 
@@ -25,7 +26,10 @@ public struct ProgressDashboard: View {
                     ProgressOverviewCard(viewModel: viewModel)
                     
                     // Before/After section
-                    BeforeAfterSection(viewModel: viewModel)
+                    NavigationLink(destination: BeforeAfterView(viewModel: viewModel)) {
+                        BeforeAfterSection(viewModel: viewModel)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                     
                     // Recent progress entries
                     RecentProgressSection(viewModel: viewModel)
@@ -35,6 +39,19 @@ public struct ProgressDashboard: View {
             }
             .background(AppColors.background)
             .navigationTitle("Progress")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        showPhotoCapture = true
+                    }) {
+                        Image(systemName: "camera.fill")
+                            .foregroundColor(AppColors.primary)
+                    }
+                }
+            }
+            .sheet(isPresented: $showPhotoCapture) {
+                PhotoCaptureView(viewModel: viewModel)
+            }
         }
     }
 }
