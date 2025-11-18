@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Foga Onboarding</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&amp;display=swap" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#13ec5b",
+            "background-light": "#f6f8f6",
+            "background-dark": "#102216",
+          },
+          fontFamily: {
+            "display": ["Manrope", "sans-serif"]
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+        },
+      },
+    }
+  </script>
+<style type="text/tailwindcss">
+    body {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-base">
+<div class="relative flex min-h-screen w-full flex-col overflow-x-hidden @container/design-root">
+<div class="flex flex-1 flex-col justify-between">
+<!-- Slide 1: Track Your Progress -->
+<div class="flex flex-1 flex-col">
+<div class="p-4">
+<div class="bg-cover bg-center flex flex-col justify-end overflow-hidden rounded-xl min-h-[384px] @[480px]:min-h-[420px]" data-alt="Abstract graphic of a phone scanning a face with augmented reality overlays and geometric patterns." style="background-image: linear-gradient(0deg, rgba(16, 34, 22, 0.4) 0%, rgba(16, 34, 22, 0) 25%), url('https://lh3.googleusercontent.com/aida-public/AB6AXuBAIB1knRzxS_Jcur6QHL_B4wVd1sGtkVXT-ya8O7UBYBOV21aA-V5T6jtRD70oebB9p8EOG9nRMVpS3uz81Qom2LJ4Twsi9Z5QSEedhoynt2HSSf19G-X6tW31M3q8Gp2w0ErHGk-cSoSJ_-tOq8MrOYWryNux6RUfHIEnzBFPuMmNqVhGRKeR30-gn1cObaZ1tqy-0P2s2NnijnUByiUZR2y2_62fYDzhjqDT5JHpvXqeuIvNEu75vf8WkokudsHHwgFRxcFv9vjr');">
+</div>
+</div>
+<div class="flex-grow">
+<h1 class="text-[#f6f8f6] dark:text-white tracking-tight text-3xl font-bold leading-tight px-6 text-center pb-2 pt-6">Track Your Progress with Precision</h1>
+<p class="text-[#f6f8f6]/70 dark:text-white/70 text-base font-normal leading-normal pb-3 pt-1 px-6 text-center">Our app uses AI and face scanning to map and track your facial changes over time.</p>
+</div>
+</div>
+<!-- Common Bottom Section -->
+<div class="w-full shrink-0">
+<div class="flex w-full flex-row items-center justify-center gap-3 py-5">
+<div class="h-2 w-2 rounded-full bg-primary"></div>
+<div class="h-2 w-2 rounded-full bg-primary/30"></div>
+<div class="h-2 w-2 rounded-full bg-primary/30"></div>
+</div>
+<div class="flex justify-stretch">
+<div class="flex flex-1 gap-3 flex-wrap px-4 py-3 justify-between">
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-12 px-5 bg-transparent text-[#f6f8f6] dark:text-white text-base font-bold leading-normal tracking-[0.015em]">
+<span class="truncate">Skip</span>
+</button>
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-12 px-5 bg-primary text-background-dark text-base font-bold leading-normal tracking-[0.015em]">
+<span class="truncate">Next</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>
